@@ -3,6 +3,8 @@ import { useState, useEffect } from 'react';
 import type { Photo } from '@capacitor/camera';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Preferences } from '@capacitor/preferences';
+import { isPlatform } from '@ionic/react';
+import { Capacitor } from '@capacitor/core';
 
 export function usePhotoGallery() {
   const [photos, setPhotos] = useState<UserPhoto[]>([]);
@@ -14,12 +16,14 @@ export function usePhotoGallery() {
       const { value: photoList } = await Preferences.get({ key: PHOTO_STORAGE });
       const photosInPreferences = (photoList ? JSON.parse(photoList) : []) as UserPhoto[];
     
-      for (const photo of photosInPreferences){
-        const readFile = await Filesystem.readFile({
-          path: photo.filepath,
-          directory: Directory.Data,
-        });
-        photo.webviewPath = `data:image/jpeg;base64,${readFile.data}`;
+      if (!isPlatform('hybrid')) {
+        for (const photo of photosInPreferences){
+          const readFile = await Filesystem.readFile({
+            path: photo.filepath,
+            directory: Directory.Data,
+          });
+          photo.webviewPath = `data:image/jpeg;base64,${readFile.data}`;
+        }
       }
       setPhotos(photosInPreferences);
     };
@@ -44,9 +48,18 @@ export function usePhotoGallery() {
   };
 
   const savePicture = async (photo: Photo, fileName: string): Promise<UserPhoto> => {
-    const response = await fetch(photo.webPath!);
-    const blob = await response.blob();
-    const base64Data = (await convertBlobToBase64(blob)) as string;
+    let base64Data: string | Blob;
+
+    if (isPlatform('hybrid')) {
+      const readFile = await Filesystem.readFile({
+        path: photo.path!,
+      });
+      base64Data = readFile.data;
+    } else {
+      const response = await fetch(photo.webPath!);
+      const blob = await response.blob();
+      base64Data = (await convertBlobToBase64(blob)) as string;
+    }
 
     const savedFile = await Filesystem.writeFile({
       path: fileName,
@@ -54,11 +67,19 @@ export function usePhotoGallery() {
       directory: Directory.Data,
     });
 
-    return{
-      filepath: fileName,
-      webviewPath: photo.webPath,
-    };
+    if (isPlatform('hybrid')) {
+      return {
+        filepath: savedFile.uri,
+        webviewPath: Capacitor.convertFileSrc(savedFile.uri),
+      };
+    } else {
+      return{
+        filepath: fileName,
+        webviewPath: photo.webPath,
+      };
+    }    
   };
+
   const convertBlobToBase64 = (blob: Blob) => {
     return new Promise((resolve, reject) =>{
       const reader = new FileReader();
